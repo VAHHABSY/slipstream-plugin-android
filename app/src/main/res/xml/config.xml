@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+    <EditTextPreference
+        app:key="domain"
+        app:persistent="false"
+        app:title="Domain"
+        app:useSimpleSummaryProvider="true"/>
+    <SwitchPreferenceCompat
+        app:key="authoritative"
+        app:persistent="false"
+        app:title="Authoritative mode"/>
+    <EditTextPreference
+        app:key="cert"
+        app:persistent="false"
+        app:title="Pinned certificate (PEM path)"
+        app:useSimpleSummaryProvider="true"/>
+    <EditTextPreference
+        app:key="keep_alive_interval"
+        app:persistent="false"
+        app:title="Keep-alive interval (seconds)"
+        app:useSimpleSummaryProvider="true"/>
+</PreferenceScreen>

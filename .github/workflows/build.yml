@@ -5,33 +5,29 @@ on:
     branches: [ master, main ]
   pull_request:
     branches: [ master, main ]
-  workflow_dispatch:  # Allows manual trigger
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     
     steps:
-      # Step 1: Checkout code with submodules
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive  # ✅ Critical for slipstream-rust
+          submodules: recursive
+          fetch-depth: 0
 
-      # Step 2: Set up JDK 17
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # Step 3: Install Rust
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
 
-      # Step 4: Add Android targets to Rust
       - name: Add Android targets
         run: |
           rustup target add armv7-linux-androideabi
@@ -39,20 +35,87 @@ jobs:
           rustup target add i686-linux-android
           rustup target add x86_64-linux-android
 
-      # Step 5: Install Python (required for OpenSSL)
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
-      # Step 6: Set up Android NDK
-      - name: Set up Android NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r27b  # Matches your 27.2.12479018
-          add-to-path: true
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      # Step 7: Cache Gradle dependencies
+      - name: Accept SDK licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Install NDK and build tools
+        run: |
+          sdkmanager --install "ndk;27.2.12479018"
+          sdkmanager --install "cmake;3.22.1"
+          sdkmanager --install "build-tools;36.0.0"
+
+      - name: Export NDK environment variables
+        run: |
+          NDK_PATH="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
+          echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
+          echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          echo "ANDROID_NDK=$NDK_PATH" >> $GITHUB_ENV
+          echo "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y make perl pkg-config libssl-dev clang llvm ninja-build
+
+      - name: Cache OpenSSL builds
+        id: cache-openssl
+        uses: actions/cache@v4
+        with:
+          path: /tmp/openssl-*
+          key: openssl-3.0.13-android-ndk27-${{ runner.os }}
+
+      - name: Build OpenSSL for Android targets
+        if: steps.cache-openssl.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          cd /tmp
+          wget -q https://www.openssl.org/source/openssl-3.0.13.tar.gz
+          tar -xzf openssl-3.0.13.tar.gz
+          
+          NDK="$ANDROID_NDK_HOME"
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+          API=23
+          
+          build_openssl() {
+            local ARCH=$1
+            local ANDROID_ARCH=$2
+            local PREFIX=$3
+            local COMPILER_PREFIX=$4
+            
+            echo "========================================"
+            echo "Building OpenSSL for $ARCH..."
+            echo "========================================"
+            cd /tmp/openssl-3.0.13
+            
+            export PATH="$TOOLCHAIN/bin:$PATH"
+            export CC="$TOOLCHAIN/bin/${COMPILER_PREFIX}${API}-clang"
+            export CXX="$TOOLCHAIN/bin/${COMPILER_PREFIX}${API}-clang++"
+            export AR="$TOOLCHAIN/bin/llvm-ar"
+            export RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
+            
+            ./Configure $ANDROID_ARCH -D__ANDROID_API__=${API} --prefix=$PREFIX no-shared
+            make clean || true
+            make -j$(nproc)
+            make install_sw
+            
+            echo "✅ OpenSSL built for $ARCH"
+            ls -la $PREFIX/lib/ | head -10
+          }
+          
+          build_openssl "armeabi-v7a" "android-arm" "/tmp/openssl-armeabi-v7a" "armv7a-linux-androideabi"
+          build_openssl "arm64-v8a" "android-arm64" "/tmp/openssl-arm64-v8a" "aarch64-linux-android"
+          build_openssl "x86" "android-x86" "/tmp/openssl-x86" "i686-linux-android"
+          build_openssl "x86_64" "android-x86_64" "/tmp/openssl-x86_64" "x86_64-linux-android"
+
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -63,8 +126,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # Step 8: Cache Rust dependencies
-      - name: Cache Rust
+      - name: Cache Cargo
         uses: actions/cache@v4
         with:
           path: |
@@ -72,31 +134,46 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            app/src/main/rust/slipstream-rust/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('app/src/main/rust/slipstream-rust/**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-      # Step 9: Grant execute permission
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      # Step 10: Build Debug APK
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          ANDROID_NDK: ${{ env.ANDROID_NDK }}
+          OPENSSL_ARMEABI_V7A_ROOT: /tmp/openssl-armeabi-v7a
+          OPENSSL_ARM64_V8A_ROOT: /tmp/openssl-arm64-v8a
+          OPENSSL_X86_ROOT: /tmp/openssl-x86
+          OPENSSL_X86_64_ROOT: /tmp/openssl-x86_64
 
-      # Step 11: Build Release APK
-      - name: Build Release APK
-        run: ./gradlew assembleRelease --stacktrace
-
-      # Step 12: Upload Debug APK
       - name: Upload Debug APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: slipstream-plugin-debug
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
 
-      # Step 13: Upload Release APKs (all ABIs)
+      - name: Build Release APK
+        if: success()
+        run: ./gradlew assembleRelease --stacktrace
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          ANDROID_NDK: ${{ env.ANDROID_NDK }}
+          OPENSSL_ARMEABI_V7A_ROOT: /tmp/openssl-armeabi-v7a
+          OPENSSL_ARM64_V8A_ROOT: /tmp/openssl-arm64-v8a
+          OPENSSL_X86_ROOT: /tmp/openssl-x86
+          OPENSSL_X86_64_ROOT: /tmp/openssl-x86_64
+
       - name: Upload Release APKs
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: slipstream-plugin-release
           path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error

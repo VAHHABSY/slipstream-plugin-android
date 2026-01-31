@@ -5,6 +5,25 @@
         app:persistent="false"
         app:title="Domain"
         app:useSimpleSummaryProvider="true"/>
+    
+    <!-- Resolver Selection Dropdown -->
+    <ListPreference
+        app:key="resolver"
+        app:persistent="false"
+        app:title="DNS Resolver"
+        app:entries="@array/resolver_entries"
+        app:entryValues="@array/resolver_values"
+        app:defaultValue="cloudflare"
+        app:useSimpleSummaryProvider="true"/>
+    
+    <!-- Custom Resolver Input (only shown when Custom is selected) -->
+    <EditTextPreference
+        app:key="custom_resolver"
+        app:persistent="false"
+        app:title="Custom Resolver IP"
+        app:summary="Enter custom DNS server IP (e.g., 1.1.1.1)"
+        app:useSimpleSummaryProvider="true"/>
+    
     <SwitchPreferenceCompat
         app:key="authoritative"
         app:persistent="false"

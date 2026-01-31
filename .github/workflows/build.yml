@@ -1,31 +1,102 @@
-name: Build Android Plugin
+name: Build Slipstream APK
 
 on:
   push:
+    branches: [ master, main ]
   pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:  # Allows manual trigger
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: Checkout
+      # Step 1: Checkout code with submodules
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive  # ✅ Critical for slipstream-rust
 
-      - name: Set up JDK
+      # Step 2: Set up JDK 17
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: 17
+          distribution: 'temurin'
+          java-version: '17'
 
-      - name: Grant execute permission for Gradlew
+      # Step 3: Install Rust
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      # Step 4: Add Android targets to Rust
+      - name: Add Android targets
+        run: |
+          rustup target add armv7-linux-androideabi
+          rustup target add aarch64-linux-android
+          rustup target add i686-linux-android
+          rustup target add x86_64-linux-android
+
+      # Step 5: Install Python (required for OpenSSL)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # Step 6: Set up Android NDK
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27b  # Matches your 27.2.12479018
+          add-to-path: true
+
+      # Step 7: Cache Gradle dependencies
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # Step 8: Cache Rust dependencies
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            app/src/main/rust/slipstream-rust/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # Step 9: Grant execute permission
+      - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Build APK
-        run: ./gradlew assembleDebug
+      # Step 10: Build Debug APK
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
 
-      - name: Upload APK artifact
+      # Step 11: Build Release APK
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --stacktrace
+
+      # Step 12: Upload Debug APK
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: slipstream-plugin-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/*.apk
+
+      # Step 13: Upload Release APKs (all ABIs)
+      - name: Upload Release APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: slipstream-plugin-release
+          path: app/build/outputs/apk/release/*.apk

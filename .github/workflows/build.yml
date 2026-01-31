@@ -10,7 +10,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     
     steps:
       # Step 1: Checkout with submodules
@@ -76,43 +76,73 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y make perl pkg-config libssl-dev clang llvm ninja-build
 
-      # Step 11: Build OpenSSL for Android (CRITICAL FIX)
+      # Step 11: Cache OpenSSL builds
+      - name: Cache OpenSSL builds
+        id: cache-openssl
+        uses: actions/cache@v4
+        with:
+          path: /tmp/openssl-*
+          key: openssl-3.0.13-android-ndk27-${{ runner.os }}
+
+      # Step 12: Build OpenSSL for ALL Android architectures
       - name: Build OpenSSL for Android targets
+        if: steps.cache-openssl.outputs.cache-hit != 'true'
         run: |
           set -e
           cd /tmp
-          wget https://www.openssl.org/source/openssl-3.0.13.tar.gz
+          wget -q https://www.openssl.org/source/openssl-3.0.13.tar.gz
           tar -xzf openssl-3.0.13.tar.gz
-          cd openssl-3.0.13
           
           NDK="$ANDROID_NDK_HOME"
           TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
           API=23
           
-          # Build for armeabi-v7a
-          export PATH="$TOOLCHAIN/bin:$PATH"
-          export CC="$TOOLCHAIN/bin/armv7a-linux-androideabi${API}-clang"
-          export CXX="$TOOLCHAIN/bin/armv7a-linux-androideabi${API}-clang++"
-          export AR="$TOOLCHAIN/bin/llvm-ar"
-          export RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
+          # Function to build OpenSSL for a target
+          build_openssl() {
+            local ARCH=$1
+            local ANDROID_ARCH=$2
+            local PREFIX=$3
+            local COMPILER_PREFIX=$4
+            
+            echo "========================================="
+            echo "Building OpenSSL for $ARCH..."
+            echo "========================================="
+            cd /tmp/openssl-3.0.13
+            
+            export PATH="$TOOLCHAIN/bin:$PATH"
+            export CC="$TOOLCHAIN/bin/${COMPILER_PREFIX}${API}-clang"
+            export CXX="$TOOLCHAIN/bin/${COMPILER_PREFIX}${API}-clang++"
+            export AR="$TOOLCHAIN/bin/llvm-ar"
+            export RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
+            
+            ./Configure $ANDROID_ARCH -D__ANDROID_API__=${API} --prefix=$PREFIX no-shared
+            make clean || true
+            make -j$(nproc)
+            make install_sw
+            
+            echo "✅ OpenSSL built for $ARCH"
+            ls -la $PREFIX/lib/ | head -10
+          }
           
-          ./Configure android-arm -D__ANDROID_API__=${API} --prefix=/tmp/openssl-armeabi-v7a no-shared
-          make clean
-          make -j$(nproc)
-          make install_sw
+          # Build for all 4 architectures
+          build_openssl "armeabi-v7a" "android-arm" "/tmp/openssl-armeabi-v7a" "armv7a-linux-androideabi"
+          build_openssl "arm64-v8a" "android-arm64" "/tmp/openssl-arm64-v8a" "aarch64-linux-android"
+          build_openssl "x86" "android-x86" "/tmp/openssl-x86" "i686-linux-android"
+          build_openssl "x86_64" "android-x86_64" "/tmp/openssl-x86_64" "x86_64-linux-android"
           
-          echo "OpenSSL built for armeabi-v7a at /tmp/openssl-armeabi-v7a"
-          ls -la /tmp/openssl-armeabi-v7a/lib/
+          echo "========================================="
+          echo "✅ All OpenSSL builds completed!"
+          echo "========================================="
 
-      # Step 12: Set OpenSSL paths for CMake
-      - name: Export OpenSSL paths for Android
+      # Step 13: Export OpenSSL paths (will be used by build scripts per-arch)
+      - name: Export OpenSSL base paths
         run: |
-          echo "OPENSSL_ROOT_DIR=/tmp/openssl-armeabi-v7a" >> $GITHUB_ENV
-          echo "OPENSSL_INCLUDE_DIR=/tmp/openssl-armeabi-v7a/include" >> $GITHUB_ENV
-          echo "OPENSSL_CRYPTO_LIBRARY=/tmp/openssl-armeabi-v7a/lib/libcrypto.a" >> $GITHUB_ENV
-          echo "OPENSSL_SSL_LIBRARY=/tmp/openssl-armeabi-v7a/lib/libssl.a" >> $GITHUB_ENV
+          echo "OPENSSL_ARMEABI_V7A_DIR=/tmp/openssl-armeabi-v7a" >> $GITHUB_ENV
+          echo "OPENSSL_ARM64_V8A_DIR=/tmp/openssl-arm64-v8a" >> $GITHUB_ENV
+          echo "OPENSSL_X86_DIR=/tmp/openssl-x86" >> $GITHUB_ENV
+          echo "OPENSSL_X86_64_DIR=/tmp/openssl-x86_64" >> $GITHUB_ENV
 
-      # Step 13: Cache Gradle
+      # Step 14: Cache Gradle
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -123,7 +153,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # Step 14: Cache Cargo
+      # Step 15: Cache Cargo
       - name: Cache Cargo
         uses: actions/cache@v4
         with:
@@ -136,22 +166,45 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # Step 15: Make gradlew executable
+      # Step 16: Make gradlew executable
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      # Step 16: Build Debug APK
+      # Step 17: Build Debug APK with architecture-specific OpenSSL paths
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-          ANDROID_NDK: ${{ env.ANDROID_NDK }}
-          OPENSSL_ROOT_DIR: ${{ env.OPENSSL_ROOT_DIR }}
-          OPENSSL_INCLUDE_DIR: ${{ env.OPENSSL_INCLUDE_DIR }}
-          OPENSSL_CRYPTO_LIBRARY: ${{ env.OPENSSL_CRYPTO_LIBRARY }}
-          OPENSSL_SSL_LIBRARY: ${{ env.OPENSSL_SSL_LIBRARY }}
+        run: |
+          # Create a wrapper script to set OpenSSL paths per-architecture
+          cat > set_openssl_env.sh << 'EOF'
+          #!/bin/bash
+          case "$ANDROID_ABI" in
+            armeabi-v7a)
+              export OPENSSL_ROOT_DIR=/tmp/openssl-armeabi-v7a
+              ;;
+            arm64-v8a)
+              export OPENSSL_ROOT_DIR=/tmp/openssl-arm64-v8a
+              ;;
+            x86)
+              export OPENSSL_ROOT_DIR=/tmp/openssl-x86
+              ;;
+            x86_64)
+              export OPENSSL_ROOT_DIR=/tmp/openssl-x86_64
+              ;;
+          esac
+          export OPENSSL_INCLUDE_DIR=$OPENSSL_ROOT_DIR/include
+          export OPENSSL_CRYPTO_LIBRARY=$OPENSSL_ROOT_DIR/lib/libcrypto.a
+          export OPENSSL_SSL_LIBRARY=$OPENSSL_ROOT_DIR/lib/libssl.a
+          EOF
+          chmod +x set_openssl_env.sh
+          
+          # Export for all architectures
+          export OPENSSL_ARMEABI_V7A_DIR=/tmp/openssl-armeabi-v7a
+          export OPENSSL_ARM64_V8A_DIR=/tmp/openssl-arm64-v8a
+          export OPENSSL_X86_DIR=/tmp/openssl-x86
+          export OPENSSL_X86_64_DIR=/tmp/openssl-x86_64
+          
+          ./gradlew assembleDebug --stacktrace
 
-      # Step 17: Upload Debug APK
+      # Step 18: Upload Debug APK
       - name: Upload Debug APK
         if: success()
         uses: actions/upload-artifact@v4
@@ -160,19 +213,18 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      # Step 18: Build Release APK
+      # Step 19: Build Release APK
       - name: Build Release APK
         if: success()
-        run: ./gradlew assembleRelease --stacktrace
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-          ANDROID_NDK: ${{ env.ANDROID_NDK }}
-          OPENSSL_ROOT_DIR: ${{ env.OPENSSL_ROOT_DIR }}
-          OPENSSL_INCLUDE_DIR: ${{ env.OPENSSL_INCLUDE_DIR }}
-          OPENSSL_CRYPTO_LIBRARY: ${{ env.OPENSSL_CRYPTO_LIBRARY }}
-          OPENSSL_SSL_LIBRARY: ${{ env.OPENSSL_SSL_LIBRARY }}
+        run: |
+          export OPENSSL_ARMEABI_V7A_DIR=/tmp/openssl-armeabi-v7a
+          export OPENSSL_ARM64_V8A_DIR=/tmp/openssl-arm64-v8a
+          export OPENSSL_X86_DIR=/tmp/openssl-x86
+          export OPENSSL_X86_64_DIR=/tmp/openssl-x86_64
+          
+          ./gradlew assembleRelease --stacktrace
 
-      # Step 19: Upload Release APKs
+      # Step 20: Upload Release APKs
       - name: Upload Release APKs
         if: success()
         uses: actions/upload-artifact@v4

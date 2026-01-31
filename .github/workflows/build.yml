@@ -56,7 +56,7 @@ jobs:
           yes | sdkmanager --licenses || true
           
           # Install the exact NDK version, build-tools, and CMake
-          sdkmanager "ndk;27.2.12479018" "cmake;3.22.1" "build-tools;36.0.0"
+          sdkmanager "ndk;27.2.12479018" "cmake;3.22.1" "build-tools;36.0.0" || exit 1
           
           # Export NDK environment variables
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> $GITHUB_ENV
@@ -74,10 +74,10 @@ jobs:
         run: |
           echo "NDK Home: $ANDROID_NDK_HOME"
           echo "NDK Root: $ANDROID_NDK_ROOT"
-          ls -la $ANDROID_SDK_ROOT/ndk/27.2.12479018 || echo "NDK directory not found"
-          which make || echo "make not found"
-          which perl || echo "perl not found"
-          cmake --version || echo "cmake not found"
+          ls -la $ANDROID_SDK_ROOT/ndk/27.2.12479018 || exit 1
+          which make || exit 1
+          which perl || exit 1
+          cmake --version || exit 1
 
       # Step 10: Cache Gradle dependencies
       - name: Cache Gradle

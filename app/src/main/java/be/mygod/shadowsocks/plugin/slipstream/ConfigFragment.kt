@@ -7,12 +7,14 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.preference.EditTextPreference
+import androidx.preference.ListPreference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.SwitchPreferenceCompat
 import com.github.shadowsocks.plugin.PluginOptions
 
 class ConfigFragment : PreferenceFragmentCompat() {
     private val domain by lazy { findPreference<EditTextPreference>("domain")!! }
+    private val resolver by lazy { findPreference<ListPreference>("resolver")!! }
     private val authoritative by lazy { findPreference<SwitchPreferenceCompat>("authoritative")!! }
     private val cert by lazy { findPreference<EditTextPreference>("cert")!! }
     private val keepAliveInterval by lazy { findPreference<EditTextPreference>("keep_alive_interval")!! }
@@ -20,6 +22,11 @@ class ConfigFragment : PreferenceFragmentCompat() {
     val options get() = PluginOptions().apply {
         val domainValue = domain.text?.trim().takeIf { !it.isNullOrEmpty() }
         putWithDefault("domain", domainValue)
+        
+        // Add resolver option
+        val resolverValue = resolver.value?.trim().takeIf { !it.isNullOrEmpty() }
+        putWithDefault("resolver", resolverValue, "cloudflare")
+        
         if (authoritative.isChecked) {
             putWithDefault("authoritative", "")
         }
@@ -31,6 +38,7 @@ class ConfigFragment : PreferenceFragmentCompat() {
 
     fun onInitializePluginOptions(options: PluginOptions) {
         domain.text = options["domain"]
+        resolver.value = options["resolver"] ?: "cloudflare"
         authoritative.isChecked = options.containsKey("authoritative")
         cert.text = options["cert"]
         keepAliveInterval.text = options["keep-alive-interval"]

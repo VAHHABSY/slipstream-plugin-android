@@ -5,18 +5,19 @@ on:
     branches: [ master, main ]
   pull_request:
     branches: [ master, main ]
-  workflow_dispatch:  # Allows manual trigger
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     
     steps:
-      # Step 1: Checkout code with submodules
+      # Step 1: Checkout with submodules
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive  # ✅ Critical for slipstream-rust
+          submodules: recursive
+          fetch-depth: 0
 
       # Step 2: Set up JDK 17
       - name: Set up JDK 17
@@ -25,13 +26,11 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # Step 3: Install Rust
+      # Step 3: Install Rust (FIXED - no duplicate parameter)
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
 
-      # Step 4: Add Android targets to Rust
+      # Step 4: Add Android targets
       - name: Add Android targets
         run: |
           rustup target add armv7-linux-androideabi
@@ -39,47 +38,87 @@ jobs:
           rustup target add i686-linux-android
           rustup target add x86_64-linux-android
 
-      # Step 5: Install Python (required for OpenSSL)
+      # Step 5: Verify Rust
+      - name: Verify Rust
+        run: |
+          rustc --version
+          cargo --version
+          rustup show
+
+      # Step 6: Install Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
-      # Step 6: Set up Android SDK
+      # Step 7: Set up Android SDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      # Step 7: Install NDK, Build Tools, and CMake
+      # Step 8: Accept SDK licenses
+      - name: Accept SDK licenses
+        run: yes | sdkmanager --licenses || true
+
+      # Step 9: Install NDK, Build Tools, and CMake
       - name: Install NDK and build tools
         run: |
-          # Install cmdline-tools if not present
-          yes | sdkmanager --licenses || true
+          echo "Installing NDK 27.2.12479018..."
+          sdkmanager --install "ndk;27.2.12479018"
+          sdkmanager --install "cmake;3.22.1"
+          sdkmanager --install "build-tools;36.0.0"
           
-          # Install the exact NDK version, build-tools, and CMake
-          sdkmanager "ndk;27.2.12479018" "cmake;3.22.1" "build-tools;36.0.0" || exit 1
+          echo "Listing installed NDK versions:"
+          ls -la $ANDROID_SDK_ROOT/ndk/ || echo "NDK directory not found"
+
+      # Step 10: Export NDK environment variables
+      - name: Export NDK and build paths
+        run: |
+          NDK_PATH="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
+          echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
+          echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          echo "ANDROID_NDK=$NDK_PATH" >> $GITHUB_ENV
           
-          # Export NDK environment variables
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> $GITHUB_ENV
-          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> $GITHUB_ENV
-          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> $GITHUB_ENV
+          echo "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          
+          echo "Exported NDK paths:"
+          echo "ANDROID_NDK_HOME=$NDK_PATH"
 
-      # Step 8: Install make and perl (required for OpenSSL)
-      - name: Install make and perl
+      # Step 11: Install build dependencies
+      - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y make perl
+          sudo apt-get update -qq
+          sudo apt-get install -y make perl pkg-config libssl-dev clang llvm
 
-      # Step 9: Verify installations
-      - name: Verify NDK and tools installation
+      # Step 12: Install cargo-ndk
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      # Step 13: Verify all installations
+      - name: Verify installations
         run: |
-          echo "NDK Home: $ANDROID_NDK_HOME"
-          echo "NDK Root: $ANDROID_NDK_ROOT"
-          ls -la $ANDROID_SDK_ROOT/ndk/27.2.12479018 || exit 1
-          which make || exit 1
-          which perl || exit 1
-          cmake --version || exit 1
+          echo "=== Rust ==="
+          rustc --version
+          cargo --version
+          
+          echo "=== Python ==="
+          python3 --version
+          
+          echo "=== Build Tools ==="
+          make --version
+          perl --version
+          cmake --version
+          clang --version
+          
+          echo "=== NDK ==="
+          echo "ANDROID_NDK_HOME: $ANDROID_NDK_HOME"
+          ls -la $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/ | head -20
+          
+          echo "=== OpenSSL (host) ==="
+          openssl version || echo "OpenSSL not in PATH"
+          pkg-config --modversion openssl || echo "pkg-config openssl not found"
 
-      # Step 10: Cache Gradle dependencies
+      # Step 14: Cache Gradle
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -90,8 +129,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # Step 11: Cache Rust dependencies
-      - name: Cache Rust
+      # Step 15: Cache Cargo
+      - name: Cache Cargo
         uses: actions/cache@v4
         with:
           path: |
@@ -100,30 +139,43 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             app/src/main/rust/slipstream-rust/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('app/src/main/rust/slipstream-rust/**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-      # Step 12: Grant execute permission
+      # Step 16: Make gradlew executable
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      # Step 13: Build Debug APK
+      # Step 17: Build Debug APK
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          ANDROID_NDK: ${{ env.ANDROID_NDK }}
 
-      # Step 14: Build Release APK
-      - name: Build Release APK
-        run: ./gradlew assembleRelease --stacktrace
-
-      # Step 15: Upload Debug APK
+      # Step 18: Upload Debug APK
       - name: Upload Debug APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: slipstream-plugin-debug
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
 
-      # Step 16: Upload Release APKs (all ABIs)
+      # Step 19: Build Release APK
+      - name: Build Release APK
+        if: success()
+        run: ./gradlew assembleRelease --stacktrace
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          ANDROID_NDK: ${{ env.ANDROID_NDK }}
+
+      # Step 20: Upload Release APKs
       - name: Upload Release APKs
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: slipstream-plugin-release
           path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error

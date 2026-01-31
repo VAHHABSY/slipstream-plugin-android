@@ -2,6 +2,39 @@
 
 Client-only SIP003 plugin built from slipstream-rust.
 
+## NekoBox Compatibility
+
+This plugin is now compatible with **NekoBox for Android** as a native plugin.
+
+### Installation
+
+1. Build the plugin APK:
+   ```bash
+   ./gradlew assembleRelease
+   ```
+
+2. Install the plugin APK on your Android device
+
+3. In NekoBox:
+   - The plugin will be automatically detected as `slipstream-plugin`
+   - You can use it with various protocols (not just Shadowsocks)
+   - Configure the plugin settings through the NekoBox UI
+
+### Plugin Details
+
+- **Plugin ID**: `slipstream-plugin`
+- **Package Name**: `moe.matsuri.exe.slipstream`
+- **Authority**: `moe.matsuri.exe.slipstream`
+
+### Configuration Options
+
+The plugin supports the same configuration options as before:
+- Domain
+- Resolver (Cloudflare, Google, etc. or custom IP)
+- Authoritative mode
+- Certificate
+- Keep-alive interval
+
 ## Setup
 
 - Initialize submodules:

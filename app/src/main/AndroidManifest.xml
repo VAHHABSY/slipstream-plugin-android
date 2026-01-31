@@ -7,31 +7,19 @@
     <application
         android:allowBackup="false"
         android:extractNativeLibs="true"
-        android:label="slipstream">
+        android:label="Slipstream Plugin">
         <provider android:name=".BinaryProvider"
             android:exported="true"
             android:directBootAware="true"
-            android:authorities="be.mygod.shadowsocks.plugin.slipstream.BinaryProvider"
+            android:authorities="moe.matsuri.exe.slipstream"
             tools:ignore="ExportedContentProvider">
             <intent-filter>
-                <action android:name="com.github.shadowsocks.plugin.ACTION_NATIVE_PLUGIN"/>
+                <action android:name="io.nekohasekai.sagernet.plugin.ACTION_NATIVE_PLUGIN"/>
             </intent-filter>
-            <intent-filter>
-                <action android:name="com.github.shadowsocks.plugin.ACTION_NATIVE_PLUGIN"/>
-                <data android:scheme="plugin"
-                    android:host="com.github.shadowsocks"
-                    android:path="/slipstream"/>
-            </intent-filter>
-            <intent-filter>
-                <action android:name="com.github.shadowsocks.plugin.ACTION_NATIVE_PLUGIN"/>
-                <data android:scheme="plugin"
-                    android:host="com.github.shadowsocks"
-                    android:path="/slipstream"/>
-            </intent-filter>
-            <meta-data android:name="com.github.shadowsocks.plugin.id"
-                android:value="slipstream"/>
-            <meta-data android:name="com.github.shadowsocks.plugin.id.aliases"
-                android:value="slipstream"/>
+            <meta-data android:name="io.nekohasekai.sagernet.plugin.id"
+                android:value="slipstream-plugin"/>
+            <meta-data android:name="io.nekohasekai.sagernet.plugin.executable_path"
+                android:value="libslipstream.so"/>
         </provider>
         <activity
             android:name=".ConfigActivity"
@@ -41,7 +29,7 @@
                 <action android:name="com.github.shadowsocks.plugin.ACTION_CONFIGURE"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:scheme="plugin"
-                    android:host="com.github.shadowsocks"
+                    android:host="moe.matsuri.exe"
                     android:path="/slipstream"/>
             </intent-filter>
         </activity>

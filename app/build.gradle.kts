@@ -31,11 +31,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "be.mygod.shadowsocks.plugin.slipstream"
+        applicationId = "moe.matsuri.exe.slipstream"
         minSdk = minSdkVersion
         targetSdk = 36
         versionCode = 1
-        versionName = "0.0.1"
+        versionName = "1.0.0-nekobox"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

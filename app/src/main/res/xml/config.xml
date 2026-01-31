@@ -5,6 +5,17 @@
         app:persistent="false"
         app:title="Domain"
         app:useSimpleSummaryProvider="true"/>
+    
+    <!-- NEW: Resolver Selection -->
+    <ListPreference
+        app:key="resolver"
+        app:persistent="false"
+        app:title="DNS Resolver"
+        app:entries="@array/resolver_entries"
+        app:entryValues="@array/resolver_values"
+        app:defaultValue="cloudflare"
+        app:useSimpleSummaryProvider="true"/>
+    
     <SwitchPreferenceCompat
         app:key="authoritative"
         app:persistent="false"

@@ -112,6 +112,23 @@ cargo {
             )
             spec.environment("PICOQUIC_AUTO_BUILD", "1")
             spec.environment("BUILD_TYPE", if (cargoProfile == "release") "Release" else "Debug")
+            // Set OpenSSL paths dynamically per architecture (CRITICAL FOR BUILD)
+            val opensslRoot = when (abi) {
+                "armeabi-v7a" -> System.getenv("OPENSSL_ARMEABI_V7A_ROOT") ?: "/tmp/openssl-armeabi-v7a"
+                "arm64-v8a" -> System.getenv("OPENSSL_ARM64_V8A_ROOT") ?: "/tmp/openssl-arm64-v8a"
+                "x86" -> System.getenv("OPENSSL_X86_ROOT") ?: "/tmp/openssl-x86"
+                "x86_64" -> System.getenv("OPENSSL_X86_64_ROOT") ?: "/tmp/openssl-x86_64"
+                else -> "/tmp/openssl-$abi"
+            }
+            spec.environment("OPENSSL_ROOT_DIR", opensslRoot)
+            spec.environment("OPENSSL_INCLUDE_DIR", "$opensslRoot/include")
+            spec.environment("OPENSSL_CRYPTO_LIBRARY", "$opensslRoot/lib/libcrypto.a")
+            spec.environment("OPENSSL_SSL_LIBRARY", "$opensslRoot/lib/libssl.a")
+            spec.environment("OPENSSL_DIR", opensslRoot)
+            spec.environment("OPENSSL_STATIC", "1")
+            spec.environment("CMAKE_PREFIX_PATH", opensslRoot)
+            spec.environment("CMAKE_FIND_ROOT_PATH", opensslRoot)
+            project.logger.lifecycle("🔧 Using OpenSSL from: $opensslRoot for ABI: $abi")
             val toolchainPrebuilt = android.ndkDirectory
                 .resolve("toolchains/llvm/prebuilt")
                 .listFiles()

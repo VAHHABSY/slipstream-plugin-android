@@ -10,6 +10,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     
     steps:
       # Step 1: Checkout with submodules
@@ -26,7 +27,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # Step 3: Install Rust (FIXED - no duplicate parameter)
+      # Step 3: Install Rust
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -38,87 +39,80 @@ jobs:
           rustup target add i686-linux-android
           rustup target add x86_64-linux-android
 
-      # Step 5: Verify Rust
-      - name: Verify Rust
-        run: |
-          rustc --version
-          cargo --version
-          rustup show
-
-      # Step 6: Install Python
+      # Step 5: Install Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
-      # Step 7: Set up Android SDK
+      # Step 6: Set up Android SDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      # Step 8: Accept SDK licenses
+      # Step 7: Accept SDK licenses
       - name: Accept SDK licenses
         run: yes | sdkmanager --licenses || true
 
-      # Step 9: Install NDK, Build Tools, and CMake
+      # Step 8: Install NDK, Build Tools, and CMake
       - name: Install NDK and build tools
         run: |
-          echo "Installing NDK 27.2.12479018..."
           sdkmanager --install "ndk;27.2.12479018"
           sdkmanager --install "cmake;3.22.1"
           sdkmanager --install "build-tools;36.0.0"
-          
-          echo "Listing installed NDK versions:"
-          ls -la $ANDROID_SDK_ROOT/ndk/ || echo "NDK directory not found"
 
-      # Step 10: Export NDK environment variables
-      - name: Export NDK and build paths
+      # Step 9: Export NDK environment variables
+      - name: Export NDK environment variables
         run: |
           NDK_PATH="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
           echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
           echo "ANDROID_NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
           echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
           echo "ANDROID_NDK=$NDK_PATH" >> $GITHUB_ENV
-          
           echo "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
-          
-          echo "Exported NDK paths:"
-          echo "ANDROID_NDK_HOME=$NDK_PATH"
 
-      # Step 11: Install build dependencies
+      # Step 10: Install build dependencies
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y make perl pkg-config libssl-dev clang llvm
+          sudo apt-get install -y make perl pkg-config libssl-dev clang llvm ninja-build
 
-      # Step 12: Install cargo-ndk
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk
-
-      # Step 13: Verify all installations
-      - name: Verify installations
+      # Step 11: Build OpenSSL for Android (CRITICAL FIX)
+      - name: Build OpenSSL for Android targets
         run: |
-          echo "=== Rust ==="
-          rustc --version
-          cargo --version
+          set -e
+          cd /tmp
+          wget https://www.openssl.org/source/openssl-3.0.13.tar.gz
+          tar -xzf openssl-3.0.13.tar.gz
+          cd openssl-3.0.13
           
-          echo "=== Python ==="
-          python3 --version
+          NDK="$ANDROID_NDK_HOME"
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+          API=23
           
-          echo "=== Build Tools ==="
-          make --version
-          perl --version
-          cmake --version
-          clang --version
+          # Build for armeabi-v7a
+          export PATH="$TOOLCHAIN/bin:$PATH"
+          export CC="$TOOLCHAIN/bin/armv7a-linux-androideabi${API}-clang"
+          export CXX="$TOOLCHAIN/bin/armv7a-linux-androideabi${API}-clang++"
+          export AR="$TOOLCHAIN/bin/llvm-ar"
+          export RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
           
-          echo "=== NDK ==="
-          echo "ANDROID_NDK_HOME: $ANDROID_NDK_HOME"
-          ls -la $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/ | head -20
+          ./Configure android-arm -D__ANDROID_API__=${API} --prefix=/tmp/openssl-armeabi-v7a no-shared
+          make clean
+          make -j$(nproc)
+          make install_sw
           
-          echo "=== OpenSSL (host) ==="
-          openssl version || echo "OpenSSL not in PATH"
-          pkg-config --modversion openssl || echo "pkg-config openssl not found"
+          echo "OpenSSL built for armeabi-v7a at /tmp/openssl-armeabi-v7a"
+          ls -la /tmp/openssl-armeabi-v7a/lib/
 
-      # Step 14: Cache Gradle
+      # Step 12: Set OpenSSL paths for CMake
+      - name: Export OpenSSL paths for Android
+        run: |
+          echo "OPENSSL_ROOT_DIR=/tmp/openssl-armeabi-v7a" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=/tmp/openssl-armeabi-v7a/include" >> $GITHUB_ENV
+          echo "OPENSSL_CRYPTO_LIBRARY=/tmp/openssl-armeabi-v7a/lib/libcrypto.a" >> $GITHUB_ENV
+          echo "OPENSSL_SSL_LIBRARY=/tmp/openssl-armeabi-v7a/lib/libssl.a" >> $GITHUB_ENV
+
+      # Step 13: Cache Gradle
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -129,7 +123,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # Step 15: Cache Cargo
+      # Step 14: Cache Cargo
       - name: Cache Cargo
         uses: actions/cache@v4
         with:
@@ -138,23 +132,26 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            app/src/main/rust/slipstream-rust/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('app/src/main/rust/slipstream-rust/**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # Step 16: Make gradlew executable
+      # Step 15: Make gradlew executable
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      # Step 17: Build Debug APK
+      # Step 16: Build Debug APK
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
           ANDROID_NDK: ${{ env.ANDROID_NDK }}
+          OPENSSL_ROOT_DIR: ${{ env.OPENSSL_ROOT_DIR }}
+          OPENSSL_INCLUDE_DIR: ${{ env.OPENSSL_INCLUDE_DIR }}
+          OPENSSL_CRYPTO_LIBRARY: ${{ env.OPENSSL_CRYPTO_LIBRARY }}
+          OPENSSL_SSL_LIBRARY: ${{ env.OPENSSL_SSL_LIBRARY }}
 
-      # Step 18: Upload Debug APK
+      # Step 17: Upload Debug APK
       - name: Upload Debug APK
         if: success()
         uses: actions/upload-artifact@v4
@@ -163,15 +160,19 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      # Step 19: Build Release APK
+      # Step 18: Build Release APK
       - name: Build Release APK
         if: success()
         run: ./gradlew assembleRelease --stacktrace
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
           ANDROID_NDK: ${{ env.ANDROID_NDK }}
+          OPENSSL_ROOT_DIR: ${{ env.OPENSSL_ROOT_DIR }}
+          OPENSSL_INCLUDE_DIR: ${{ env.OPENSSL_INCLUDE_DIR }}
+          OPENSSL_CRYPTO_LIBRARY: ${{ env.OPENSSL_CRYPTO_LIBRARY }}
+          OPENSSL_SSL_LIBRARY: ${{ env.OPENSSL_SSL_LIBRARY }}
 
-      # Step 20: Upload Release APKs
+      # Step 19: Upload Release APKs
       - name: Upload Release APKs
         if: success()
         uses: actions/upload-artifact@v4

@@ -45,14 +45,41 @@ jobs:
         with:
           python-version: '3.x'
 
-      # Step 6: Set up Android NDK
-      - name: Set up Android NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r27b  # Matches your 27.2.12479018
-          add-to-path: true
+      # Step 6: Set up Android SDK
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      # Step 7: Cache Gradle dependencies
+      # Step 7: Install NDK, Build Tools, and CMake
+      - name: Install NDK and build tools
+        run: |
+          # Install cmdline-tools if not present
+          yes | sdkmanager --licenses || true
+          
+          # Install the exact NDK version, build-tools, and CMake
+          sdkmanager "ndk;27.2.12479018" "cmake;3.22.1" "build-tools;36.0.0"
+          
+          # Export NDK environment variables
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> $GITHUB_ENV
+          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> $GITHUB_ENV
+
+      # Step 8: Install make and perl (required for OpenSSL)
+      - name: Install make and perl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make perl
+
+      # Step 9: Verify installations
+      - name: Verify NDK and tools installation
+        run: |
+          echo "NDK Home: $ANDROID_NDK_HOME"
+          echo "NDK Root: $ANDROID_NDK_ROOT"
+          ls -la $ANDROID_SDK_ROOT/ndk/27.2.12479018 || echo "NDK directory not found"
+          which make || echo "make not found"
+          which perl || echo "perl not found"
+          cmake --version || echo "cmake not found"
+
+      # Step 10: Cache Gradle dependencies
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -63,7 +90,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # Step 8: Cache Rust dependencies
+      # Step 11: Cache Rust dependencies
       - name: Cache Rust
         uses: actions/cache@v4
         with:
@@ -75,26 +102,26 @@ jobs:
             app/src/main/rust/slipstream-rust/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      # Step 9: Grant execute permission
+      # Step 12: Grant execute permission
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      # Step 10: Build Debug APK
+      # Step 13: Build Debug APK
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      # Step 11: Build Release APK
+      # Step 14: Build Release APK
       - name: Build Release APK
         run: ./gradlew assembleRelease --stacktrace
 
-      # Step 12: Upload Debug APK
+      # Step 15: Upload Debug APK
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: slipstream-plugin-debug
           path: app/build/outputs/apk/debug/*.apk
 
-      # Step 13: Upload Release APKs (all ABIs)
+      # Step 16: Upload Release APKs (all ABIs)
       - name: Upload Release APKs
         uses: actions/upload-artifact@v4
         with:
